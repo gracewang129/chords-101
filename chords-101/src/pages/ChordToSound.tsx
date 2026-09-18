@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as Tone from 'tone'
+import { appendQuizNote, isChordGuessComplete } from '../utils/quizLogic'
 
 const SEMITONES = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B']
 
@@ -27,10 +28,6 @@ function noteToMidiGeneric(note: string) {
   return (octave + 1) * 12 + index
 }
 
-function midiToFreq(midi: number) {
-  return 440 * Math.pow(2, (midi - 69) / 12)
-}
-
 function toSharpName(noteWithOctave: string) {
   // return the note name (no octave) in sharps where applicable
   const m = noteWithOctave.match(/^([A-G](?:#|b)?)(-?\d+)?$/)
@@ -51,14 +48,18 @@ export default function ChordToSound() {
   const [samplesLoaded, setSamplesLoaded] = useState(false)
   const [shownNotes, setShownNotes] = useState<string[]>([])
   const hideTimeoutRef = useRef<number | null>(null)
-  const [currentChord, setCurrentChord] = useState('');
+  const [currentChord, setCurrentChord] = useState('')
   const [root, setRoot] = useState('C')
   const [selectedChordIdx, setSelectedChordIdx] = useState<number | null>(null)
+  const [quizMode, setQuizMode] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+  const recentQuizNotesRef = useRef<string[]>([])
+  const quizTargetNotesRef = useRef<string[]>([])
+  const toastTimeoutRef = useRef<number | null>(null)
 
   // generate two octaves: C4..B5
   const notes: string[] = []
-  // expand to three octaves: C4..B6
-  for (let oct = 4; oct <= 6; oct++) {
+  for (let oct = 4; oct <= 5; oct++) {
     for (const s of SEMITONES) {
       notes.push(`${s}${oct}`)
     }
@@ -126,6 +127,11 @@ export default function ChordToSound() {
     // find canonical key name used in the keyboard (notes array) by matching MIDI
     const canonical = notes.find((n) => noteToMidiGeneric(n) === noteToMidiGeneric(note)) || note
     setActive((s) => ({ ...s, [canonical]: true }))
+
+    if (quizMode) {
+      recordQuizNote(canonical)
+    }
+
     if (hasSample) {
       try {
         samplerRef.current.triggerAttackRelease(note, duration)
@@ -174,20 +180,86 @@ export default function ChordToSound() {
     return midiToNoteName(newMidi)
   }
 
+  function buildChordTitle(chord: { nameCN: string; englishLong: string; englishShort: string; seventh?: string[]; triad?: string[] }, chordRoot: string) {
+    const sourceNotes = chord.seventh ?? chord.triad ?? []
+    const shift = rootIndexFromLabel(chordRoot) - NOTE_INDEX['E']
+    const transposedForTitle = sourceNotes.map((n: string) => transposeNote(n, shift))
+    const englishText = `${chordRoot} ${chord.englishLong} / ${chordRoot}${chord.englishShort}`
+    const notesText = transposedForTitle.join(' - ')
+    return quizMode ? `${chord.nameCN} (${englishText})` : `${chord.nameCN} (${englishText})：${notesText}`
+  }
+
+  function showToast(message: string) {
+    setToast(message)
+    if (toastTimeoutRef.current) {
+      window.clearTimeout(toastTimeoutRef.current)
+    }
+    toastTimeoutRef.current = window.setTimeout(() => {
+      setToast(null)
+      resetQuizSession()
+    }, 1500)
+  }
+
+  function resetQuizSession() {
+    recentQuizNotesRef.current = []
+    quizTargetNotesRef.current = []
+    setToast(null)
+    if (toastTimeoutRef.current) {
+      window.clearTimeout(toastTimeoutRef.current)
+      toastTimeoutRef.current = null
+    }
+  }
+
+  function startQuizForChord(chord: { nameCN: string; englishLong: string; englishShort: string; seventh?: string[]; triad?: string[] }, chordRoot: string) {
+    const sourceNotes = chord.seventh ?? chord.triad ?? []
+    const shift = rootIndexFromLabel(chordRoot) - NOTE_INDEX['E']
+    const transposed = sourceNotes.map((n: string) => transposeNote(n, shift))
+    quizTargetNotesRef.current = transposed
+    recentQuizNotesRef.current = []
+    setToast(null)
+    setCurrentChord(buildChordTitle(chord, chordRoot))
+  }
+
+  function syncSelectedChordToQuizTarget() {
+    if (!quizMode) {
+      resetQuizSession()
+      return
+    }
+    if (selectedChordIdx !== null && chords[selectedChordIdx]) {
+      startQuizForChord(chords[selectedChordIdx], root)
+    } else {
+      resetQuizSession()
+    }
+  }
+
+  function recordQuizNote(note: string) {
+    const targetNotes = quizTargetNotesRef.current
+    if (!quizMode || targetNotes.length === 0) return
+
+    const canonical = notes.find((n) => noteToMidiGeneric(n) === noteToMidiGeneric(note)) || note
+    const { history, isComplete } = appendQuizNote(targetNotes, recentQuizNotesRef.current, canonical)
+    recentQuizNotesRef.current = history
+
+    if (isComplete && isChordGuessComplete(targetNotes, history)) {
+      showToast('Correct!')
+    }
+  }
+
   // handlers for pointer interactions
   function handlePointerDown(note: string) {
-    return (e: any) => {
+    return () => {
       startNote(note)
     }
   }
 
   function handlePointerUp(note: string) {
-    return (e: any) => {
+    return () => {
       stopNote(note)
     }
   }
 
   const pianoWidth = whiteNotes.length * keyWidth
+
   // chord definitions (E-root templates). Each item contains a type label and notes defined for root=E.
   const chords = [
     {
@@ -248,6 +320,10 @@ export default function ChordToSound() {
     },
   ]
 
+  const visibleCurrentChord = selectedChordIdx !== null && chords[selectedChordIdx]
+    ? buildChordTitle(chords[selectedChordIdx], root)
+    : currentChord
+
   function playChordSequence(notesArr: string[], noteDuration = 360, gap = 120) {
     if (!notesArr || notesArr.length === 0) return
     // compute semitone shift from base root 'E' to selected root
@@ -265,12 +341,20 @@ export default function ChordToSound() {
     }
   }
 
+  useEffect(() => {
+    if (quizMode) {
+      syncSelectedChordToQuizTarget()
+    } else {
+      resetQuizSession()
+    }
+  }, [quizMode, selectedChordIdx, root])
+
   return (
     <div style={{ padding: 20 }}>
-      <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 600, minWidth: 56 }}>根音:</span>
-          {( ['A','A#','B','B#','C','C#','D','D#','E','E#','F','F3','G','G3'] ).map((opt) => {
+          {( ['A','A#','B','B#','C','C#','D','D#','E','E#','F','F3','G','G#'] ).map((opt) => {
             const isSelected = opt === root
             return (
               <button
@@ -284,8 +368,7 @@ export default function ChordToSound() {
                     const sourceNotes = c.seventh ?? c.triad
                     const shift = rootIndexFromLabel(newRoot) - NOTE_INDEX['E']
                     const transposedForTitle = sourceNotes.map((n: string) => transposeNote(n, shift))
-                    const englishText = `${newRoot} ${c.englishLong} / ${newRoot}${c.englishShort}`
-                    const title = `${c.nameCN} (${englishText})：${transposedForTitle.join(' - ')}`
+                    const title = buildChordTitle(c, newRoot)
                     setCurrentChord(title)
                     if (hideTimeoutRef.current) {
                       window.clearTimeout(hideTimeoutRef.current)
@@ -312,14 +395,40 @@ export default function ChordToSound() {
             )
           })}
         </div>
+
+        <button
+          type="button"
+          aria-label="Toggle quiz mode"
+          onClick={() => {
+            const nextQuizMode = !quizMode
+            setQuizMode(nextQuizMode)
+            if (nextQuizMode) {
+              syncSelectedChordToQuizTarget()
+            } else {
+              resetQuizSession()
+            }
+          }}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            borderRadius: 999,
+            border: '1px solid #d0d7de',
+            background: quizMode ? '#1f6feb' : '#f6f8fa',
+            color: quizMode ? '#fff' : '#24292f',
+            padding: '8px 14px',
+            cursor: 'pointer',
+            fontWeight: 700,
+          }}
+        >
+          <span>{quizMode ? 'ON' : 'OFF'}</span>
+          <span>Quiz Mode</span>
+        </button>
       </div>
       <div style={{ marginBottom: 12 }}>
         {chords.map((c, idx) => {
           const sourceNotes = c.seventh ?? c.triad
-          const shift = rootIndexFromLabel(root) - NOTE_INDEX['E']
-          const transposedForTitle = sourceNotes.map((n: string) => transposeNote(n, shift))
-          const englishText = `${root} ${c.englishLong} / ${root}${c.englishShort}`
-          const title = `${c.nameCN} (${englishText})：${transposedForTitle.join(' - ')}`
+          const title = buildChordTitle(c, root)
           return (
               <div key={`chord-${idx}`} style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ flex: 1 }}>
@@ -329,6 +438,10 @@ export default function ChordToSound() {
                   type="button"
                   onClick={() => {
                     setSelectedChordIdx(idx)
+                    if (quizMode) {
+                      startQuizForChord(c, root)
+                      return
+                    }
                     setCurrentChord(title)
                     playChordSequence(sourceNotes)
                   }}
@@ -344,19 +457,37 @@ export default function ChordToSound() {
                     boxShadow: '0 6px 10px rgba(25,118,210,0.18)'
                   }}
                 >
-                  Play
+                  {quizMode ? 'Quiz' : 'Play'}
                 </button>
               </div>
           )
         })}
         <span style={{ marginLeft: 12 }}>{samplesLoaded ? 'Samples ready' : 'Loading samples...'}</span>
       </div>
-      <h2>{currentChord}</h2>
+      <h2>{visibleCurrentChord}</h2>
+      {toast ? (
+        <div
+          style={{
+            position: 'fixed',
+            top: 16,
+            right: 16,
+            background: '#22c55e',
+            color: '#fff',
+            padding: '10px 16px',
+            borderRadius: 8,
+            fontWeight: 700,
+            boxShadow: '0 8px 20px rgba(34, 197, 94, 0.28)',
+            zIndex: 1000,
+          }}
+        >
+          {toast}
+        </div>
+      ) : null}
       <div className="piano" style={{ width: pianoWidth }}>
         <div className="white-keys">
           {whiteNotes.map((k) => {
             const label = toSharpName(k.replace(/\d+$/, ''))
-            const showLabel = shownNotes.some((s) => noteToMidiGeneric(s) === noteToMidiGeneric(k))
+            const showLabel = !quizMode && shownNotes.some((s) => noteToMidiGeneric(s) === noteToMidiGeneric(k))
             return (
               <div
                 key={k}
@@ -387,7 +518,7 @@ export default function ChordToSound() {
           const whitesBefore = notes.slice(0, fullIndex).filter((n) => !n.match(/[b#]/)).length
           const left = whitesBefore * keyWidth - keyWidth / 2 + keyWidth
           const label = toSharpName(note.replace(/\d+$/, ''))
-          const showLabel = shownNotes.some((s) => noteToMidiGeneric(s) === noteToMidiGeneric(note))
+          const showLabel = !quizMode && shownNotes.some((s) => noteToMidiGeneric(s) === noteToMidiGeneric(note))
           return (
             <div
               key={note}

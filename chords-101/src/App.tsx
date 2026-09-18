@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import heroImg from './assets/hero.png'
 import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
@@ -7,7 +6,6 @@ import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import ChordToSound from './pages/ChordToSound'
 
 function Home() {
-  const [count, setCount] = useState(0)
   const navigate = useNavigate()
 
   return (
@@ -28,7 +26,6 @@ function Home() {
           type="button"
           className="counter"
           onClick={() => {
-            setCount((count) => count + 1)
             navigate('/chord-to-sound')
           }}
         >
