@@ -14,6 +14,8 @@ const NOTE_INDEX: Record<string, number> = {
   B: 11, Cb: 11,
 }
 
+const SHARP_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+
 function noteToMidiGeneric(note: string) {
   // accepts C4, C#4, Db4
   const m = note.match(/^([A-G](?:#|b)?)(-?\d+)$/)
@@ -49,10 +51,14 @@ export default function ChordToSound() {
   const [samplesLoaded, setSamplesLoaded] = useState(false)
   const [shownNotes, setShownNotes] = useState<string[]>([])
   const hideTimeoutRef = useRef<number | null>(null)
+  const [currentChord, setCurrentChord] = useState('');
+  const [root, setRoot] = useState('C')
+  const [selectedChordIdx, setSelectedChordIdx] = useState<number | null>(null)
 
   // generate two octaves: C4..B5
   const notes: string[] = []
-  for (let oct = 4; oct <= 5; oct++) {
+  // expand to three octaves: C4..B6
+  for (let oct = 4; oct <= 6; oct++) {
     for (const s of SEMITONES) {
       notes.push(`${s}${oct}`)
     }
@@ -117,7 +123,9 @@ export default function ChordToSound() {
     }
     const duration = `${Math.max(50, durationMs)}ms`
     const hasSample = samplesLoaded
-    setActive((s) => ({ ...s, [note]: true }))
+    // find canonical key name used in the keyboard (notes array) by matching MIDI
+    const canonical = notes.find((n) => noteToMidiGeneric(n) === noteToMidiGeneric(note)) || note
+    setActive((s) => ({ ...s, [canonical]: true }))
     if (hasSample) {
       try {
         samplerRef.current.triggerAttackRelease(note, duration)
@@ -127,31 +135,48 @@ export default function ChordToSound() {
     } else {
       synthRef.current.triggerAttackRelease(note, duration)
     }
-    // clear highlight after duration
-    setTimeout(() => setActive((s) => ({ ...s, [note]: false })), durationMs + 20)
+    // clear highlight after duration (use canonical key)
+    setTimeout(() => setActive((s) => ({ ...s, [canonical]: false })), durationMs + 20)
   }
 
   // legacy stopNote kept for sequences using explicit stop (not used now)
   function stopNote(note: string) {
+    // release both sampler/synth and clear canonical active key
     try {
       samplerRef.current.triggerRelease?.(note)
     } catch {}
     try {
       synthRef.current.triggerRelease?.(note)
     } catch {}
-    setActive((s) => ({ ...s, [note]: false }))
+    const canonical = notes.find((n) => noteToMidiGeneric(n) === noteToMidiGeneric(note)) || note
+    setActive((s) => ({ ...s, [canonical]: false }))
+  }
+
+  // convert midi number back to note string (use sharps)
+  function midiToNoteName(midi: number) {
+    const idx = ((midi % 12) + 12) % 12
+    const oct = Math.floor(midi / 12) - 1
+    return `${SHARP_NAMES[idx]}${oct}`
+  }
+
+  function rootIndexFromLabel(lbl: string) {
+    const base = lbl.replace(/\d+$/, '')
+    if (NOTE_INDEX[base] !== undefined) return NOTE_INDEX[base]
+    // handle some enharmonic labels user may pick
+    if (base === 'B#') return NOTE_INDEX['C']
+    if (base === 'E#') return NOTE_INDEX['F']
+    return NOTE_INDEX['E']
+  }
+
+  function transposeNote(note: string, semitoneShift: number) {
+    const midi = noteToMidiGeneric(note)
+    const newMidi = midi + semitoneShift
+    return midiToNoteName(newMidi)
   }
 
   // handlers for pointer interactions
   function handlePointerDown(note: string) {
     return (e: any) => {
-      if (shownNotes.length) {
-        setShownNotes([])
-        if (hideTimeoutRef.current) {
-          window.clearTimeout(hideTimeoutRef.current)
-          hideTimeoutRef.current = null
-        }
-      }
       startNote(note)
     }
   }
@@ -163,65 +188,78 @@ export default function ChordToSound() {
   }
 
   const pianoWidth = whiteNotes.length * keyWidth
-  // chord definitions (each line will render a description + one button)
+  // chord definitions (E-root templates). Each item contains a type label and notes defined for root=E.
   const chords = [
     {
-      title: 'I — E (大三和弦): 三和弦: E G# B',
+      nameCN: '属七和弦',
+      englishLong: 'Dominant 7th',
+      englishShort: '7',
+      triad: ['E4', 'G#4', 'B4'],
+      seventh: ['E4', 'G#4', 'B4', 'D5'],
+    },
+    {
+      nameCN: '大七和弦',
+      englishLong: 'Major 7th',
+      englishShort: 'maj7',
       triad: ['E4', 'G#4', 'B4'],
       seventh: ['E4', 'G#4', 'B4', 'D#5'],
     },
     {
-      title: 'ii — F#m (小三和弦): 三和弦: F# A C#',
-      triad: ['F#4', 'A4', 'C#5'],
-      seventh: ['F#4', 'A4', 'C#5', 'E5'],
+      nameCN: '小七和弦',
+      englishLong: 'Minor 7th',
+      englishShort: 'm7',
+      triad: ['E4', 'G4', 'B4'],
+      seventh: ['E4', 'G4', 'B4', 'D5'],
     },
     {
-      title: 'iii — G#m (小三和弦): 三和弦: G# B D#',
-      triad: ['G#4', 'B4', 'D#5'],
-      seventh: ['G#4', 'B4', 'D#5', 'F#5'],
+      nameCN: '小大七和弦',
+      englishLong: 'Minor Major 7th',
+      englishShort: 'm(maj7)',
+      triad: ['E4', 'G4', 'B4'],
+      seventh: ['E4', 'G4', 'B4', 'D#5'],
     },
     {
-      title: 'IV — A (大三和弦): 三和弦: A C# E',
-      triad: ['A4', 'C#5', 'E5'],
-      seventh: ['A4', 'C#5', 'E5', 'G#5'],
+      nameCN: '半减七 / 小七减五',
+      englishLong: 'Half-Diminished',
+      englishShort: 'ø7',
+      triad: ['E4', 'G4', 'Bb4'],
+      seventh: ['E4', 'G4', 'Bb4', 'D5'],
     },
     {
-      title: 'V — B (大三和弦 / 属和弦): 三和弦: B D# F#',
-      triad: ['B4', 'D#5', 'F#5'],
-      seventh: ['B4', 'D#5', 'F#5', 'A5'],
+      nameCN: '减七和弦',
+      englishLong: 'Diminished 7th',
+      englishShort: '°7',
+      triad: ['E4', 'G4', 'Bb4'],
+      seventh: ['E4', 'G4', 'Bb4', 'C#5'],
     },
     {
-      title: 'vi — C#m (小三和弦): 三和弦: C# E G#',
-      triad: ['C#4', 'E4', 'G#4'],
-      seventh: ['C#4', 'E4', 'G#4', 'B4'],
+      nameCN: '增七和弦',
+      englishLong: 'Augmented 7th',
+      englishShort: '7#5',
+      triad: ['E4', 'G#4', 'C5'],
+      seventh: ['E4', 'G#4', 'C5', 'D5'],
     },
     {
-      title: 'vii° — D#° (减三和弦): 三和弦: D# F# A',
-      triad: ['D#4', 'F#4', 'A4'],
-      seventh: ['D#4', 'F#4', 'A4', 'C#5'],
-    },
-    // Sus examples
-    {
-      title: 'Esus2 = E F# B (替代三度)',
-      triad: ['E4', 'F#4', 'B4'],
-      seventh: null,
-    },
-    {
-      title: 'Esus4 = E A B (替代三度)',
-      triad: ['E4', 'A4', 'B4'],
-      seventh: null,
+      nameCN: '增大大七和弦',
+      englishLong: 'Augmented Major 7th',
+      englishShort: 'maj7#5',
+      triad: ['E4', 'G#4', 'C5'],
+      seventh: ['E4', 'G#4', 'C5', 'D#5'],
     },
   ]
 
   function playChordSequence(notesArr: string[], noteDuration = 360, gap = 120) {
     if (!notesArr || notesArr.length === 0) return
-    setShownNotes(notesArr)
+    // compute semitone shift from base root 'E' to selected root
+    const shift = rootIndexFromLabel(root) - NOTE_INDEX['E']
+    const transposed = notesArr.map((n) => transposeNote(n, shift))
+    setShownNotes(transposed)
     if (hideTimeoutRef.current) {
       window.clearTimeout(hideTimeoutRef.current)
       hideTimeoutRef.current = null
     }
     let t = 0
-    for (const n of notesArr) {
+    for (const n of transposed) {
       window.setTimeout(() => startNote(n, noteDuration), t)
       t += noteDuration + gap
     }
@@ -229,20 +267,91 @@ export default function ChordToSound() {
 
   return (
     <div style={{ padding: 20 }}>
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600, minWidth: 56 }}>根音:</span>
+          {( ['A','A#','B','B#','C','C#','D','D#','E','E#','F','F3','G','G3'] ).map((opt) => {
+            const isSelected = opt === root
+            return (
+              <button
+                key={opt}
+                onClick={() => {
+                  const newRoot = opt
+                  setRoot(newRoot)
+                  // maintain selected chord type if any
+                  if (selectedChordIdx !== null && chords[selectedChordIdx]) {
+                    const c = chords[selectedChordIdx]
+                    const sourceNotes = c.seventh ?? c.triad
+                    const shift = rootIndexFromLabel(newRoot) - NOTE_INDEX['E']
+                    const transposedForTitle = sourceNotes.map((n: string) => transposeNote(n, shift))
+                    const englishText = `${newRoot} ${c.englishLong} / ${newRoot}${c.englishShort}`
+                    const title = `${c.nameCN} (${englishText})：${transposedForTitle.join(' - ')}`
+                    setCurrentChord(title)
+                    if (hideTimeoutRef.current) {
+                      window.clearTimeout(hideTimeoutRef.current)
+                      hideTimeoutRef.current = null
+                    }
+                    setShownNotes(transposedForTitle)
+                  } else {
+                    setCurrentChord('')
+                  }
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: isSelected ? '#1976d2' : '#f5f5f5',
+                  color: isSelected ? 'white' : '#222',
+                  boxShadow: isSelected ? '0 3px 6px rgba(25,118,210,0.3)' : '0 1px 3px rgba(0,0,0,0.08)',
+                  fontWeight: 600,
+                }}
+              >
+                {opt}
+              </button>
+            )
+          })}
+        </div>
+      </div>
       <div style={{ marginBottom: 12 }}>
-        {chords.map((c, idx) => (
-          <div key={`chord-${idx}`} style={{ marginBottom: 8 }}>
-            <span style={{ marginRight: 10 }}>{c.title}</span>
-            <button
-              type="button"
-              onClick={() => playChordSequence(c.seventh ?? c.triad)}
-            >
-              Play
-            </button>
-          </div>
-        ))}
+        {chords.map((c, idx) => {
+          const sourceNotes = c.seventh ?? c.triad
+          const shift = rootIndexFromLabel(root) - NOTE_INDEX['E']
+          const transposedForTitle = sourceNotes.map((n: string) => transposeNote(n, shift))
+          const englishText = `${root} ${c.englishLong} / ${root}${c.englishShort}`
+          const title = `${c.nameCN} (${englishText})：${transposedForTitle.join(' - ')}`
+          return (
+              <div key={`chord-${idx}`} style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700 }}>{title}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedChordIdx(idx)
+                    setCurrentChord(title)
+                    playChordSequence(sourceNotes)
+                  }}
+                  style={{
+                    padding: '10px 18px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: '#1976d2',
+                    color: '#fff',
+                    fontSize: 16,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 6px 10px rgba(25,118,210,0.18)'
+                  }}
+                >
+                  Play
+                </button>
+              </div>
+          )
+        })}
         <span style={{ marginLeft: 12 }}>{samplesLoaded ? 'Samples ready' : 'Loading samples...'}</span>
       </div>
+      <h2>{currentChord}</h2>
       <div className="piano" style={{ width: pianoWidth }}>
         <div className="white-keys">
           {whiteNotes.map((k) => {
@@ -259,13 +368,6 @@ export default function ChordToSound() {
                 onPointerCancel={handlePointerUp(k)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    if (shownNotes.length) {
-                      setShownNotes([])
-                      if (hideTimeoutRef.current) {
-                        window.clearTimeout(hideTimeoutRef.current)
-                        hideTimeoutRef.current = null
-                      }
-                    }
                     startNote(k)
                   }
                 }}
@@ -298,13 +400,6 @@ export default function ChordToSound() {
               onPointerCancel={handlePointerUp(note)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  if (shownNotes.length) {
-                    setShownNotes([])
-                    if (hideTimeoutRef.current) {
-                      window.clearTimeout(hideTimeoutRef.current)
-                      hideTimeoutRef.current = null
-                    }
-                  }
                   startNote(note)
                 }
               }}
