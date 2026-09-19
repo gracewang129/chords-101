@@ -15,34 +15,40 @@ function normalizeNoteName(note: string): string {
 }
 
 export function isChordGuessComplete(targetNotes: string[], recentNotes: string[]): boolean {
-  if (!targetNotes.length || recentNotes.length !== targetNotes.length) {
+  if (!targetNotes.length) {
     return false
   }
 
   const normalizedTarget = targetNotes.map(normalizeNoteName)
   const normalizedRecent = recentNotes.map(normalizeNoteName)
-  const targetSet = new Set(normalizedTarget)
-  const recentSet = new Set(normalizedRecent)
+  const window = normalizedRecent.slice(-normalizedTarget.length)
 
-  return normalizedRecent.every((note) => targetSet.has(note)) && normalizedTarget.every((note) => recentSet.has(note))
+  if (window.length < normalizedTarget.length) {
+    return false
+  }
+
+  const targetSet = new Set(normalizedTarget)
+  return window.every((note) => targetSet.has(note)) && normalizedTarget.every((note) => window.includes(note))
+}
+
+export function resetQuizHistory(targetNotes: string[], history: string[] = []) {
+  return {
+    targetNotes: targetNotes.map(normalizeNoteName),
+    recentNotes: [] as string[],
+    previousHistory: history.map(normalizeNoteName),
+  }
 }
 
 export function appendQuizNote(targetNotes: string[], history: string[], note: string) {
   const normalizedTarget = targetNotes.map(normalizeNoteName)
   const normalizedNote = normalizeNoteName(note)
 
-  if (!normalizedTarget.includes(normalizedNote)) {
-    return {
-      history,
-      isComplete: false,
-    }
-  }
-
-  const nextHistory = [...new Set([...history, normalizedNote].map(normalizeNoteName))]
-  const isComplete = normalizedTarget.every((target) => nextHistory.includes(target))
+  const nextHistory = [...history.map(normalizeNoteName), normalizedNote]
+  const window = nextHistory.slice(-normalizedTarget.length)
+  const isComplete = isChordGuessComplete(normalizedTarget, window)
 
   return {
-    history: nextHistory,
+    history: window,
     isComplete,
   }
 }

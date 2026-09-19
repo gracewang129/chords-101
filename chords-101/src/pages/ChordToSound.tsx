@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as Tone from 'tone'
-import { appendQuizNote, isChordGuessComplete } from '../utils/quizLogic'
+import { appendQuizNote, isChordGuessComplete, resetQuizHistory } from '../utils/quizLogic'
 
 const SEMITONES = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B']
 
@@ -180,12 +180,15 @@ export default function ChordToSound() {
     return midiToNoteName(newMidi)
   }
 
-  function buildChordTitle(chord: { nameCN: string; englishLong: string; englishShort: string; seventh?: string[]; triad?: string[] }, chordRoot: string) {
+  function buildChordTitle(chord: { nameCN: string; englishLong: string; englishShort: string; seventh?: string[]; triad?: string[] }, chordRoot: string, isShort = true) {
     const sourceNotes = chord.seventh ?? chord.triad ?? []
     const shift = rootIndexFromLabel(chordRoot) - NOTE_INDEX['E']
     const transposedForTitle = sourceNotes.map((n: string) => transposeNote(n, shift))
     const englishText = `${chordRoot} ${chord.englishLong} / ${chordRoot}${chord.englishShort}`
     const notesText = transposedForTitle.join(' - ')
+    if (isShort) {
+      return `${chordRoot}${chord.englishShort}`
+    }
     return quizMode ? `${chord.nameCN} (${englishText})` : `${chord.nameCN} (${englishText})：${notesText}`
   }
 
@@ -200,9 +203,14 @@ export default function ChordToSound() {
     }, 1500)
   }
 
-  function resetQuizSession() {
+  function resetQuizSession(preserveTarget = true) {
+    const activeTarget = quizTargetNotesRef.current.length ? quizTargetNotesRef.current : []
+    const { targetNotes } = resetQuizHistory(
+      preserveTarget ? activeTarget : [],
+      recentQuizNotesRef.current,
+    )
+    quizTargetNotesRef.current = targetNotes
     recentQuizNotesRef.current = []
-    quizTargetNotesRef.current = []
     setToast(null)
     if (toastTimeoutRef.current) {
       window.clearTimeout(toastTimeoutRef.current)
@@ -263,6 +271,48 @@ export default function ChordToSound() {
   // chord definitions (E-root templates). Each item contains a type label and notes defined for root=E.
   const chords = [
     {
+      nameCN: '大三和弦',
+      englishLong: 'Major',
+      englishShort: 'maj',
+      triad: ['E4', 'G#4', 'B4'],
+      seventh: ['E4', 'G#4', 'B4'],
+    },
+    {
+      nameCN: '小三和弦',
+      englishLong: 'Minor',
+      englishShort: 'm',
+      triad: ['E4', 'G4', 'B4'],
+      seventh: ['E4', 'G4', 'B4'],
+    },
+    {
+      nameCN: '减三和弦',
+      englishLong: 'Diminished',
+      englishShort: 'dim',
+      triad: ['E4', 'G4', 'Bb4'],
+      seventh: ['E4', 'G4', 'Bb4'],
+    },
+    {
+      nameCN: '增三和弦',
+      englishLong: 'Augmented',
+      englishShort: 'aug',
+      triad: ['E4', 'G#4', 'C5'],
+      seventh: ['E4', 'G#4', 'C5'],
+    },
+    {
+      nameCN: '挂四和弦',
+      englishLong: 'Suspended 4th',
+      englishShort: 'sus4',
+      triad: ['E4', 'A4', 'B4'],
+      seventh: ['E4', 'A4', 'B4'],
+    },
+    {
+      nameCN: '挂二和弦',
+      englishLong: 'Suspended 2nd',
+      englishShort: 'sus2',
+      triad: ['E4', 'F#4', 'B4'],
+      seventh: ['E4', 'F#4', 'B4'],
+    },
+    {
       nameCN: '属七和弦',
       englishLong: 'Dominant 7th',
       englishShort: '7',
@@ -318,11 +368,73 @@ export default function ChordToSound() {
       triad: ['E4', 'G#4', 'C5'],
       seventh: ['E4', 'G#4', 'C5', 'D#5'],
     },
+    {
+      nameCN: '加九和弦',
+      englishLong: 'Add 9th',
+      englishShort: 'add9',
+      triad: ['E4', 'G#4', 'B4'],
+      seventh: ['E4', 'G#4', 'B4', 'F#5'],
+    },
+    {
+      nameCN: '六和弦',
+      englishLong: 'Major 6th',
+      englishShort: '6',
+      triad: ['E4', 'G#4', 'B4'],
+      seventh: ['E4', 'G#4', 'B4', 'C#5'],
+    },
+    {
+      nameCN: '小六和弦',
+      englishLong: 'Minor 6th',
+      englishShort: 'm6',
+      triad: ['E4', 'G4', 'B4'],
+      seventh: ['E4', 'G4', 'B4', 'C#5'],
+    },
+    {
+      nameCN: '九和弦',
+      englishLong: 'Dominant 9th',
+      englishShort: '9',
+      triad: ['E4', 'G#4', 'B4'],
+      seventh: ['E4', 'G#4', 'B4', 'D5', 'F#5'],
+    },
+    {
+      nameCN: '大九和弦',
+      englishLong: 'Major 9th',
+      englishShort: 'maj9',
+      triad: ['E4', 'G#4', 'B4'],
+      seventh: ['E4', 'G#4', 'B4', 'D#5', 'F#5'],
+    },
+    {
+      nameCN: '小九和弦',
+      englishLong: 'Minor 9th',
+      englishShort: 'm9',
+      triad: ['E4', 'G4', 'B4'],
+      seventh: ['E4', 'G4', 'B4', 'D5', 'F#5'],
+    },
+    {
+      nameCN: '十一和弦',
+      englishLong: '11th',
+      englishShort: '11',
+      triad: ['E4', 'G#4', 'B4'],
+      seventh: ['E4', 'G#4', 'B4', 'D5', 'F#5', 'A5'],
+    },
+    {
+      nameCN: '十三和弦',
+      englishLong: '13th',
+      englishShort: '13',
+      triad: ['E4', 'G#4', 'B4'],
+      seventh: ['E4', 'G#4', 'B4', 'D5', 'F#5', 'A5', 'C#5'],
+    },
   ]
 
   const visibleCurrentChord = selectedChordIdx !== null && chords[selectedChordIdx]
-    ? buildChordTitle(chords[selectedChordIdx], root)
+    ? buildChordTitle(chords[selectedChordIdx], root, false)
     : currentChord
+
+  const chordRows = [
+    { label: '三和弦 (Triads)', items: chords.slice(0, 6) },
+    { label: '七和弦 (Seventh Chords)', items: chords.slice(6, 14) },
+    { label: '加音与扩展和弦 (Added & Extended Chords)', items: chords.slice(14) },
+  ]
 
   function playChordSequence(notesArr: string[], noteDuration = 360, gap = 120) {
     if (!notesArr || notesArr.length === 0) return
@@ -345,12 +457,12 @@ export default function ChordToSound() {
     if (quizMode) {
       syncSelectedChordToQuizTarget()
     } else {
-      resetQuizSession()
+      resetQuizSession(false)
     }
   }, [quizMode, selectedChordIdx, root])
 
   return (
-    <div style={{ padding: 20 }}>
+    <div style={{ padding: 20, display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
       <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 600, minWidth: 56 }}>根音:</span>
@@ -405,7 +517,7 @@ export default function ChordToSound() {
             if (nextQuizMode) {
               syncSelectedChordToQuizTarget()
             } else {
-              resetQuizSession()
+              resetQuizSession(false)
             }
           }}
           style={{
@@ -426,42 +538,68 @@ export default function ChordToSound() {
         </button>
       </div>
       <div style={{ marginBottom: 12 }}>
-        {chords.map((c, idx) => {
-          const sourceNotes = c.seventh ?? c.triad
-          const title = buildChordTitle(c, root)
-          return (
-              <div key={`chord-${idx}`} style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700 }}>{title}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedChordIdx(idx)
-                    if (quizMode) {
-                      startQuizForChord(c, root)
-                      return
-                    }
-                    setCurrentChord(title)
-                    playChordSequence(sourceNotes)
-                  }}
-                  style={{
-                    padding: '10px 18px',
-                    borderRadius: 8,
-                    border: 'none',
-                    background: '#1976d2',
-                    color: '#fff',
-                    fontSize: 16,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    boxShadow: '0 6px 10px rgba(25,118,210,0.18)'
-                  }}
-                >
-                  {quizMode ? 'Quiz' : 'Play'}
-                </button>
-              </div>
-          )
-        })}
+        {chordRows.map((row, rowIndex) => (
+          <div key={`chord-row-${rowIndex}`} style={{ marginBottom: rowIndex < chordRows.length - 1 ? 12 : 0 }}>
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                color: '#495057',
+                marginBottom: 8,
+                letterSpacing: 0.2,
+              }}
+            >
+              {row.label}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 8,
+                alignItems: 'flex-start',
+              }}
+            >
+              {row.items.map((c, localIndex) => {
+                const globalIndex = rowIndex === 0
+                  ? localIndex
+                  : rowIndex === 1
+                    ? 6 + localIndex
+                    : 14 + localIndex
+                const sourceNotes = c.seventh ?? c.triad
+                const title = buildChordTitle(c, root)
+                return (
+                  <button
+                    key={`chord-${globalIndex}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedChordIdx(globalIndex)
+                      if (quizMode) {
+                        startQuizForChord(c, root)
+                        return
+                      }
+                      setCurrentChord(title)
+                      playChordSequence(sourceNotes)
+                    }}
+                    style={{
+                      flex: '0 0 auto',
+                      padding: '10px 18px',
+                      borderRadius: 8,
+                      border: 'none',
+                      background: '#1976d2',
+                      color: '#fff',
+                      fontSize: 16,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      boxShadow: '0 6px 10px rgba(25,118,210,0.18)',
+                    }}
+                  >
+                    {title}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
         <span style={{ marginLeft: 12 }}>{samplesLoaded ? 'Samples ready' : 'Loading samples...'}</span>
       </div>
       <h2>{visibleCurrentChord}</h2>

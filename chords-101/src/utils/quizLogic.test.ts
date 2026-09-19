@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendQuizNote, isChordGuessComplete } from './quizLogic'
+import { appendQuizNote, isChordGuessComplete, resetQuizHistory } from './quizLogic'
 
 describe('quizLogic', () => {
   it('marks the answer as complete when the most recent chord notes match the chord exactly', () => {
@@ -34,5 +34,44 @@ describe('quizLogic', () => {
     const recentNotes = ['E4', 'B4', 'D5', 'F4']
 
     expect(isChordGuessComplete(targetNotes, recentNotes)).toBe(false)
+  })
+
+  it('only accepts the most recent chord-sized window, not an older valid subset', () => {
+    const targetNotes = ['C4', 'E4', 'G4']
+    const recentNotes = ['C4', 'D4', 'E4', 'F4', 'G4']
+
+    expect(isChordGuessComplete(targetNotes, recentNotes)).toBe(false)
+  })
+
+  it('rejects a chord when a wrong note appears in the final chord-sized window', () => {
+    const targetNotes = ['C4', 'E4', 'G4']
+
+    let history: string[] = []
+    history = appendQuizNote(targetNotes, history, 'C4').history
+    history = appendQuizNote(targetNotes, history, 'D4').history
+    history = appendQuizNote(targetNotes, history, 'E4').history
+    history = appendQuizNote(targetNotes, history, 'F4').history
+    const finalStep = appendQuizNote(targetNotes, history, 'G4')
+
+    expect(finalStep.isComplete).toBe(false)
+  })
+
+  it('keeps the same chord target after a reset so it can be completed again', () => {
+    const targetNotes = ['E4', 'G#4', 'B4', 'D5']
+    const attemptedFirst = appendQuizNote(targetNotes, [], 'E4')
+    const attemptedSecond = appendQuizNote(targetNotes, attemptedFirst.history, 'G#4')
+    const attemptedThird = appendQuizNote(targetNotes, attemptedSecond.history, 'B4')
+    const completeFirst = appendQuizNote(targetNotes, attemptedThird.history, 'D5')
+
+    expect(completeFirst.isComplete).toBe(true)
+
+    const reset = resetQuizHistory(targetNotes, completeFirst.history)
+    let secondHistory = reset.recentNotes
+    secondHistory = appendQuizNote(reset.targetNotes, secondHistory, 'G#4').history
+    secondHistory = appendQuizNote(reset.targetNotes, secondHistory, 'E4').history
+    secondHistory = appendQuizNote(reset.targetNotes, secondHistory, 'B4').history
+    const completeSecond = appendQuizNote(reset.targetNotes, secondHistory, 'D5')
+
+    expect(completeSecond.isComplete).toBe(true)
   })
 })
